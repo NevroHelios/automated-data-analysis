@@ -159,7 +159,7 @@ def generate_plot(df, suggestion):
                     title=f"{fig.layout.title.text} (Colored by {color_col})"
                 )
             except Exception:
-                pass 
+                pass
 
         return fig
 
@@ -171,7 +171,6 @@ def generate_plot(df, suggestion):
 
         st.text(traceback.format_exc())  # More detailed error for debugging
         return None
-
 
 
 def get_visualization_suggestions(
@@ -229,8 +228,8 @@ def get_visualization_suggestions(
         )
         response_content = res.choices[0].message.content.strip()
         ## for debugging
-        # st.text("LLM Raw Response:") 
-        # st.text_area("Raw Output", response_content, height=150)  
+        # st.text("LLM Raw Response:")
+        # st.text_area("Raw Output", response_content, height=150)
 
         # clean if llm generates markdown
         if response_content.startswith("```json"):
@@ -241,7 +240,7 @@ def get_visualization_suggestions(
             response_content = response_content[3:]
             if response_content.endswith("```"):
                 response_content = response_content[:-3]
-        response_content = response_content.strip()  
+        response_content = response_content.strip()
 
         if not response_content.startswith("[") or not response_content.endswith("]"):
             st.error(
@@ -277,5 +276,5 @@ def get_visualization_suggestions(
         st.error(f"Error getting suggestions from LLM: {e}")
         import traceback
 
-        st.text(traceback.format_exc())  
+        st.text(traceback.format_exc())
         return None

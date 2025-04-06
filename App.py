@@ -39,7 +39,7 @@ if uploaded_file is not None:
     df.info(buf=buffer)
     df_info_str = buffer.getvalue()
     df_head_df = df.head()
-    df_desc_df = df.describe(include='all').fillna("N/A") 
+    df_desc_df = df.describe(include="all").fillna("N/A")
 
     st.subheader("DataFrame Info & Description")
     col1, col2 = st.columns(2)
@@ -47,34 +47,33 @@ if uploaded_file is not None:
         st.text("DataFrame Info:")
         st.text(df_info_str)
     with col2:
-            st.text("DataFrame Description:")
-            st.dataframe(df_desc_df)
-
+        st.text("DataFrame Description:")
+        st.dataframe(df_desc_df)
 
     st.subheader("Suggested Visualizations")
-    num_suggestions = st.slider("Number of plots to suggest:", 1, 5, 3) 
+    num_suggestions = st.slider("Number of plots to suggest:", 1, 5, 3)
 
     with st.spinner("Asking AI for visualization ideas..."):
         suggestions = get_visualization_suggestions(
             columns, df_info_str, df_head_df, df_desc_df, num_plots=num_suggestions
-            )
+        )
 
     if suggestions:
         st.success(f"Received {len(suggestions)} plot suggestions from the LLM.")
         if not suggestions:
-                st.info("LLM returned an empty list of suggestions.")
+            st.info("LLM returned an empty list of suggestions.")
 
         for i, suggestion in enumerate(suggestions):
-            st.markdown("---") # Divider
-            st.write(f"**Suggestion {i+1}:**", suggestion) # params for plot
-            with st.spinner(f"Generating plot {i+1}..."):
-                    fig = generate_plot(df.copy(), suggestion) 
+            st.markdown("---")  # Divider
+            st.write(f"**Suggestion {i + 1}:**", suggestion)  # params for plot
+            with st.spinner(f"Generating plot {i + 1}..."):
+                fig = generate_plot(df.copy(), suggestion)
 
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.warning(f"Could not generate Plot {i+1} based on the suggestion.")
+                st.warning(f"Could not generate Plot {i + 1} based on the suggestion.")
     elif suggestions == []:
-            st.info("No valid suggestions were generated.")
+        st.info("No valid suggestions were generated.")
     else:
         st.error("Failed to get visualization suggestions.")
