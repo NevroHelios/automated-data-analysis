@@ -1,8 +1,6 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional
-from scipy import stats
-from scipy.stats import pearsonr, spearmanr
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,7 +13,8 @@ def compute_distribution_stats(series: pd.Series) -> Dict[str, float]:
         Dict with mean, std, min, max, quantiles, skewness, kurtosis, outlier count
     """
     try:
-        clean_series = series.dropna()
+        # Ensure purely numeric float series
+        clean_series = pd.to_numeric(series, errors='coerce').dropna().astype(float)
         if len(clean_series) == 0:
             return {}
         
@@ -37,10 +36,15 @@ def compute_distribution_stats(series: pd.Series) -> Dict[str, float]:
             'q95': float(quantiles[0.95])
         })
         
-        # Distribution shape
+        # Distribution shape (use pandas/numpy to avoid external deps)
         try:
-            basic_stats['skewness'] = float(stats.skew(clean_series))
-            basic_stats['kurtosis'] = float(stats.kurtosis(clean_series))
+            # pandas uses unbiased estimators by default
+            skew_val = np.asarray(clean_series.skew()).astype(float).item()
+            # pandas kurtosis is Fisher's definition (0 for normal)
+            kurt_val = np.asarray(clean_series.kurtosis()).astype(float).item()
+            # Guard NaNs
+            basic_stats['skewness'] = float(0.0 if pd.isna(skew_val) else skew_val)
+            basic_stats['kurtosis'] = float(0.0 if pd.isna(kurt_val) else kurt_val)
         except Exception:
             basic_stats['skewness'] = 0.0
             basic_stats['kurtosis'] = 0.0
@@ -73,7 +77,7 @@ def encode_histogram(series: pd.Series, bins: int = 10) -> Dict[str, int]:
         Dict mapping bin ranges to counts
     """
     try:
-        clean_series = series.dropna()
+        clean_series = pd.to_numeric(series, errors='coerce').dropna().astype(float)
         if len(clean_series) == 0:
             return {}
         
@@ -116,20 +120,30 @@ def compute_correlation_stats(x_series: pd.Series, y_series: pd.Series) -> Dict[
         Dict with correlation coefficients, linear fit parameters, and sample points
     """
     try:
-        # Clean data
-        df_clean = pd.DataFrame({'x': x_series, 'y': y_series}).dropna()
+        # Build numeric dataframe and drop NaNs
+        df_clean = pd.DataFrame({'x': x_series, 'y': y_series})
+        df_clean = df_clean.apply(pd.to_numeric, errors='coerce').dropna()
         if len(df_clean) < 3:
             return {}
         
-        x_clean = df_clean['x'].values
-        y_clean = df_clean['y'].values
+        x_clean = df_clean['x'].to_numpy(dtype=float)
+        y_clean = df_clean['y'].to_numpy(dtype=float)
         
-        # Correlation coefficients
+        # Correlation coefficients (numpy/pandas implementations)
         try:
-            pearson_r, _ = pearsonr(x_clean, y_clean)
-            spearman_r, _ = spearmanr(x_clean, y_clean)
+            # Pearson via numpy corrcoef
+            pearson_matrix = np.corrcoef(x_clean, y_clean)
+            pearson_r = float(pearson_matrix[0, 1]) if pearson_matrix.shape == (2, 2) else 0.0
         except Exception:
-            pearson_r, spearman_r = 0.0, 0.0
+            pearson_r = 0.0
+        try:
+            # Spearman via rank correlation
+            x_rank = pd.Series(x_clean).rank(method='average').to_numpy(dtype=float)
+            y_rank = pd.Series(y_clean).rank(method='average').to_numpy(dtype=float)
+            spearman_matrix = np.corrcoef(x_rank, y_rank)
+            spearman_r = float(spearman_matrix[0, 1]) if spearman_matrix.shape == (2, 2) else 0.0
+        except Exception:
+            spearman_r = 0.0
         
         # Simple linear regression (manual calculation)
         try:
@@ -251,73 +265,109 @@ def compute_category_stats(series: pd.Series, target_series: Optional[pd.Series]
 def encode_plot_data(plot_config: Dict, data: pd.DataFrame) -> Dict[str, Any]:
     """
     Encode plot data based on plot type for LLM analysis.
-    
-    Args:
-        plot_config: Plot configuration with type and columns
-        data: Source dataframe
-        
-    Returns:
-        Dict with encoded plot data
     """
     try:
+        def _is_effectively_numeric(series: pd.Series) -> bool:
+            s = pd.to_numeric(series, errors='coerce')
+            return s.notna().sum() >= max(3, int(0.05 * len(s)))
+
+        def _coerce_numeric(series: pd.Series) -> pd.Series:
+            return pd.to_numeric(series, errors='coerce')
+
         plot_type = plot_config.get('plot_type', '')
         columns = plot_config.get('columns', [])
-        
-        if not columns or len(columns) == 0:
+
+        if not columns:
             return {}
-        
-        # Validate columns exist
+
         available_cols = [col for col in columns if col in data.columns]
         if not available_cols:
             return {}
-        
-        encoded_data = {
+
+        encoded_data: Dict[str, Any] = {
             'plot_type': plot_type,
             'columns': available_cols,
-            'data_shape': list(data.shape)
+            'data_shape': [int(data.shape[0]), int(data.shape[1])]
         }
-        
+
         if plot_type in ['histogram', 'box', 'violin']:
-            # Distribution analysis
-            if len(available_cols) >= 1:
-                col = available_cols[0]
-                if pd.api.types.is_numeric_dtype(data[col]):
-                    encoded_data['distribution'] = compute_distribution_stats(data[col])
-                    encoded_data['histogram_bins'] = encode_histogram(data[col])
-        
+            col = available_cols[0]
+            series = data[col]
+            if _is_effectively_numeric(series):
+                num_series = _coerce_numeric(series)
+                encoded_data['distribution'] = compute_distribution_stats(num_series)
+                encoded_data['histogram_bins'] = encode_histogram(num_series)
+
         elif plot_type == 'scatter':
-            # Correlation analysis
             if len(available_cols) >= 2:
                 x_col, y_col = available_cols[0], available_cols[1]
-                if (pd.api.types.is_numeric_dtype(data[x_col]) and 
-                    pd.api.types.is_numeric_dtype(data[y_col])):
-                    encoded_data['correlation'] = compute_correlation_stats(data[x_col], data[y_col])
-        
+                x_s, y_s = data[x_col], data[y_col]
+                if _is_effectively_numeric(x_s) and _is_effectively_numeric(y_s):
+                    encoded_data['correlation'] = compute_correlation_stats(_coerce_numeric(x_s), _coerce_numeric(y_s))
+
         elif plot_type in ['bar', 'pie']:
-            # Categorical analysis
-            if len(available_cols) >= 1:
-                col = available_cols[0]
-                target_col = available_cols[1] if len(available_cols) > 1 else None
-                target_series = data[target_col] if target_col and pd.api.types.is_numeric_dtype(data[target_col]) else None
-                encoded_data['categories'] = compute_category_stats(data[col], target_series)
-        
+            col = available_cols[0]
+            target_col = available_cols[1] if len(available_cols) > 1 else None
+            target_series = None
+            if target_col is not None and _is_effectively_numeric(data[target_col]):
+                target_series = _coerce_numeric(data[target_col])
+            encoded_data['categories'] = compute_category_stats(data[col], target_series)
+
         elif plot_type == 'line':
-            # Time series or ordered data analysis
             if len(available_cols) >= 2:
                 x_col, y_col = available_cols[0], available_cols[1]
-                if pd.api.types.is_numeric_dtype(data[y_col]):
+                y_s = data[y_col]
+                if _is_effectively_numeric(y_s):
+                    y_num = _coerce_numeric(y_s)
                     encoded_data['trend'] = {
-                        'y_stats': compute_distribution_stats(data[y_col]),
-                        'data_points': len(data),
-                        'y_range': [float(data[y_col].min()), float(data[y_col].max())]
+                        'y_stats': compute_distribution_stats(y_num),
+                        'data_points': int(len(data)),
+                        'y_range': [float(y_num.min()), float(y_num.max())]
                     }
-                    
-                    # Add correlation if x is also numeric
-                    if pd.api.types.is_numeric_dtype(data[x_col]):
-                        encoded_data['trend']['correlation'] = compute_correlation_stats(data[x_col], data[y_col])
-        
+                    x_s = data[x_col]
+                    if _is_effectively_numeric(x_s):
+                        encoded_data['trend']['correlation'] = compute_correlation_stats(_coerce_numeric(x_s), y_num)
+
+        elif plot_type == 'general':
+            numeric_stats: Dict[str, Any] = {}
+            categorical_stats: Dict[str, Any] = {}
+            numeric_histograms: Dict[str, Dict[str, int]] = {}
+
+            for col in available_cols:
+                series = data[col]
+                if _is_effectively_numeric(series):
+                    num_series = _coerce_numeric(series)
+                    stats_obj = compute_distribution_stats(num_series)
+                    numeric_histograms[col] = encode_histogram(num_series, bins=10)
+                    numeric_stats[col] = stats_obj
+                else:
+                    categorical_stats[col] = compute_category_stats(series)
+
+            if len(numeric_stats) >= 2:
+                num_cols = list(numeric_stats.keys())
+                corr_candidates: List[tuple] = []
+                for i in range(len(num_cols)):
+                    for j in range(i + 1, len(num_cols)):
+                        x_s = _coerce_numeric(data[num_cols[i]])
+                        y_s = _coerce_numeric(data[num_cols[j]])
+                        stats_pair = compute_correlation_stats(x_s, y_s)
+                        r = abs(stats_pair.get('pearson_r', 0.0))
+                        corr_candidates.append((r, num_cols[i], num_cols[j], stats_pair))
+                corr_candidates.sort(key=lambda t: t[0], reverse=True)
+                top_corrs: List[Dict[str, Any]] = []
+                for r, c1, c2, s in corr_candidates[:3]:
+                    top_corrs.append({'columns': [c1, c2], 'correlation': s})
+                if top_corrs:
+                    encoded_data['top_correlations'] = top_corrs
+
+            if numeric_stats:
+                encoded_data['numeric_stats'] = numeric_stats
+            if numeric_histograms:
+                encoded_data['numeric_histograms'] = numeric_histograms
+            if categorical_stats:
+                encoded_data['categorical_stats'] = categorical_stats
+
         return encoded_data
-    
     except Exception as e:
         logger.error(f"Error encoding plot data: {e}")
         return {}

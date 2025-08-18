@@ -5,178 +5,23 @@ from datetime import datetime
 import traceback
 import subprocess
 import logging
+import json
+import plotly.express as px
+from colorama import Fore
 try:
     from sql_agent import SQLAgent
-    from utils import get_table_info, execute_sql_query, save_data_info, create_sqlite_db
+    from utils import get_table_info, execute_sql_query, save_data_info, create_sqlite_db, create_plot_figure
+    from insight_agent import InsightAgent
 except ImportError as e:
     st.error(f"Import error: {e}")
     st.stop()
 
-def create_plot_figure(plot_config, data):
-    """Create a plot figure based on configuration"""
-    try:
-        import plotly.express as px
-        
-        plot_type = plot_config.get('plot_type')
-        columns = plot_config.get('columns', [])
-        title = plot_config.get('title', 'Plot')
-        config = plot_config.get('config', {})
-        
-        # Validate columns exist in data
-        available_cols = [col for col in columns if col in data.columns]
-        if not available_cols:
-            return None
-        
-        # Extract color/hue information from config
-        color_col = None
-        size_col = None
-        
-        # Check for various color column specifications
-        if config.get('color_column') and config.get('color_column') in data.columns:
-            color_col = config.get('color_column')
-        elif config.get('hue') and config.get('hue') in data.columns:
-            color_col = config.get('hue')
-        elif config.get('color') and config.get('color') in data.columns:
-            color_col = config.get('color')
-        
-        # Check for size column
-        if config.get('size_column') and config.get('size_column') in data.columns:
-            size_col = config.get('size_column')
-        elif config.get('size') and config.get('size') in data.columns:
-            size_col = config.get('size')
-        
-        fig = None
-        
-        if plot_type == 'histogram' and len(available_cols) >= 1:
-            fig = px.histogram(data, x=available_cols[0], title=title, 
-                             nbins=config.get('bins', 30),
-                             color=color_col)
-        elif plot_type == 'scatter' and len(available_cols) >= 2:
-            fig = px.scatter(data, x=available_cols[0], y=available_cols[1], 
-                           color=color_col, size=size_col, title=title,
-                           hover_data=data.columns.tolist()[:5])  # Add hover data
-        elif plot_type == 'bar' and len(available_cols) >= 1:
-            if len(available_cols) == 1:
-                # Count plot
-                if color_col:
-                    # Grouped bar chart
-                    grouped_data = data.groupby([available_cols[0], color_col]).size().reset_index(name='count')
-                    fig = px.bar(grouped_data, x=available_cols[0], y='count', 
-                               color=color_col, title=title,
-                               labels={'count': 'Count'})
-                else:
-                    # Simple count plot
-                    value_counts = data[available_cols[0]].value_counts().head(20)
-                    fig = px.bar(x=value_counts.index, y=value_counts.values, 
-                               title=title, labels={'x': available_cols[0], 'y': 'Count'})
-            else:
-                # Bar plot with x and y
-                fig = px.bar(data, x=available_cols[0], y=available_cols[1], 
-                           color=color_col, title=title)
-        elif plot_type == 'box' and len(available_cols) >= 1:
-            if len(available_cols) == 1:
-                fig = px.box(data, y=available_cols[0], color=color_col, title=title)
-            else:
-                fig = px.box(data, x=available_cols[0], y=available_cols[1], 
-                           color=color_col, title=title)
-        elif plot_type == 'violin' and len(available_cols) >= 1:
-            if len(available_cols) == 1:
-                fig = px.violin(data, y=available_cols[0], color=color_col, title=title)
-            else:
-                fig = px.violin(data, x=available_cols[0], y=available_cols[1], 
-                              color=color_col, title=title)
-        elif plot_type == 'line' and len(available_cols) >= 2:
-            fig = px.line(data, x=available_cols[0], y=available_cols[1], 
-                        color=color_col, title=title)
-        elif plot_type == 'area' and len(available_cols) >= 2:
-            fig = px.area(data, x=available_cols[0], y=available_cols[1], 
-                        color=color_col, title=title)
-        elif plot_type == 'pie' and len(available_cols) >= 1:
-            if color_col:
-                # Use color column for grouping
-                grouped_data = data.groupby(available_cols[0])[color_col].count().head(10)
-                fig = px.pie(values=grouped_data.values, names=grouped_data.index, title=title)
-            else:
-                value_counts = data[available_cols[0]].value_counts().head(10)
-                fig = px.pie(values=value_counts.values, names=value_counts.index, title=title)
-        elif plot_type == 'sunburst' and len(available_cols) >= 2:
-            # Hierarchical pie chart
-            fig = px.sunburst(data, path=available_cols[:3], title=title)
-        elif plot_type == 'treemap' and len(available_cols) >= 1:
-            # Tree map visualization
-            if len(available_cols) == 1:
-                value_counts = data[available_cols[0]].value_counts().head(15)
-                fig = px.treemap(names=value_counts.index, values=value_counts.values, title=title)
-            else:
-                fig = px.treemap(data, path=available_cols[:3], title=title)
-        elif plot_type == 'density_heatmap' and len(available_cols) >= 2:
-            fig = px.density_heatmap(data, x=available_cols[0], y=available_cols[1], title=title)
-        elif plot_type == 'density_contour' and len(available_cols) >= 2:
-            fig = px.density_contour(data, x=available_cols[0], y=available_cols[1], 
-                                   color=color_col, title=title)
-        
-        if fig:
-            # Update layout for better appearance
-            fig.update_layout(
-                height=400, 
-                margin=dict(l=20, r=20, t=40, b=20),
-                showlegend=True if color_col else False
-            )
-            
-            # If we have a color column, make sure the legend is visible
-            if color_col:
-                fig.update_layout(
-                    legend=dict(
-                        orientation="v",
-                        yanchor="top",
-                        y=1,
-                        xanchor="left",
-                        x=1.01
-                    )
-                )
-            
-            return fig
-        
-    except Exception as e:
-        logger.error(f"Error creating plot: {e}")
-        return None
-    
-    return None
 
-def build_metrics_text(df: pd.DataFrame) -> str:
-    """Create a compact textual summary of a dataframe suitable for LLM input."""
-    try:
-        rows, cols = df.shape
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        categorical_cols = df.select_dtypes(exclude=['number']).columns.tolist()
 
-        parts = [
-            f"Shape: {rows} rows x {cols} cols",
-            f"Numeric columns: {len(numeric_cols)}",
-            f"Categorical columns: {len(categorical_cols)}"
-        ]
 
-        # Basic stats for up to 3 numeric columns
-        for col in numeric_cols[:3]:
-            s = df[col].dropna()
-            if not s.empty:
-                parts.append(
-                    f"{col}: mean={s.mean():.3f}, min={s.min():.3f}, max={s.max():.3f}"
-                )
-
-        # Top categories for up to 2 categorical cols
-        for col in categorical_cols[:2]:
-            vc = df[col].astype(str).value_counts().head(3)
-            top = ", ".join([f"{k}({v})" for k, v in vc.items()])
-            parts.append(f"Top {col}: {top}")
-
-        return " | ".join(parts)
-    except Exception as e:
-        logger.debug(f"metrics build failed: {e}")
-        return f"Shape: {df.shape}"
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @st.dialog("📋 Dataset Preview")
@@ -375,6 +220,16 @@ def render_plots_section():
                     for j, plot_info in enumerate(plots):
                         if 'figure' in plot_info and plot_info['figure']:
                             st.plotly_chart(plot_info['figure'], use_container_width=True, key=f"plot_{i}_{j}")
+                            
+                            # Show insights if available
+                            if 'insights' in plot_info and plot_info['insights']:
+                                with st.expander(f"🔍 Insights for Plot {j+1}", expanded=False):
+                                    insights = plot_info['insights']
+                                    if isinstance(insights, list):
+                                        for insight in insights:
+                                            st.write(f"• {insight}")
+                                    else:
+                                        st.write(insights)
                         elif 'config' in plot_info:
                             st.write(f"Plot {j+1}: {plot_info['config'].get('title', 'Untitled')}")
     else:
@@ -500,9 +355,10 @@ def render_query_panel(agent_type, model, api_key, base_url, enable_plots, smart
                                         # Get column information for plot generation
                                         columns_info = {col: result[col].dtype for col in result.columns}
                                         plot_suggestions = generate_plot_suggestions(agent, user_question, columns_info, result)
-                                        
-                                        # Store plot data for later display
+                                        print(Fore.MAGENTA + json.dumps(plot_suggestions, indent=2) + Fore.RESET)
+                                        # Store plot data for later display with insights
                                         plots = []
+                                        plot_configs_for_insights = []
                                         for plot_config in plot_suggestions:
                                             # Create plot and capture it
                                             plot_fig = create_plot_figure(plot_config, result)
@@ -511,31 +367,62 @@ def render_query_panel(agent_type, model, api_key, base_url, enable_plots, smart
                                                     'config': plot_config,
                                                     'figure': plot_fig
                                                 })
+                                                plot_configs_for_insights.append(plot_config)
                                         
                                         if plots:
+                                            # Generate plot insights using InsightAgent
+                                            try:
+                                                if 'insight_agent' not in st.session_state:
+                                                    st.session_state.insight_agent = InsightAgent(agent)
+                                                    
+                                                plot_insights_list = st.session_state.insight_agent.generate_plot_insights(
+                                                    plot_configs_for_insights, result, user_question
+                                                )
+                                                
+                                                # Add insights to plots - now plot_insights_list is a list of lists
+                                                for i, plot in enumerate(plots):
+                                                    if i < len(plot_insights_list) and plot_insights_list[i]:
+                                                        plot['insights'] = plot_insights_list[i]
+                                                        
+                                            except Exception as insight_error:
+                                                if st.session_state.debug_mode:
+                                                    st.error(f"Plot insight generation error: {insight_error}")
+                                                    st.error(traceback.format_exc())
+                                            
                                             add_plot_to_history(plots, user_question)
                                     except Exception as plot_error:
                                         if st.session_state.debug_mode:
                                             st.error(f"Plot generation error: {plot_error}")
                                             st.error(traceback.format_exc())
 
-                                # Smart summary and suggestions
+                                # Smart summary and suggestions with InsightAgent
                                 if smart_summary_enabled:
                                     try:
-                                        # Build compact metrics/context from result
-                                        metrics_text = build_metrics_text(result)
-                                        st.session_state.analysis_context.append(metrics_text)
+                                        # Initialize InsightAgent if not exists
+                                        if 'insight_agent' not in st.session_state:
+                                            st.session_state.insight_agent = InsightAgent(agent)
+                                        
+                                        # Use InsightAgent for sophisticated analysis
+                                        insight_summary = st.session_state.insight_agent.analyze_query_result(
+                                            user_question, result
+                                        )
+                                        print(Fore.CYAN + "Insight Summary: " + insight_summary + Fore.RESET)
+                                        # Add to analysis context
+                                        st.session_state.analysis_context.append(insight_summary)
                                         context_tail = "\n\n".join(st.session_state.analysis_context[-5:])  # last 5
                                         
                                         summary_prompt = (
-                                            "You are a data analyst. Given the latest query results summary and prior context, "
+                                            "You are a data analyst. Given the latest query results analysis and prior context, "
                                             "write a concise 1-2 sentence insight. Then suggest up to 3 follow-up analysis questions.\n\n"
                                             f"[PRIOR CONTEXT]\n{context_tail}\n\n"
                                             f"[LATEST QUESTION]\n{user_question}\n\n"
-                                            f"[LATEST RESULT SUMMARY]\n{metrics_text}\n\n"
+                                            f"[LATEST RESULT ANALYSIS]\n{insight_summary}\n\n"
                                             "Respond in JSON with keys: summary (string), suggestions (array of strings)."
                                         )
+                                        print(Fore.GREEN + "Summary Prompt: " + summary_prompt + Fore.RESET)
                                         llm_resp = agent.query(summary_prompt).strip()
+                                        print("------------------------------------------------")
+                                        print(llm_resp)
                                         if llm_resp.startswith('```json'):
                                             llm_resp = llm_resp[7:-3]
                                         elif llm_resp.startswith('```'):
