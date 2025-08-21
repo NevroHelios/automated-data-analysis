@@ -6,18 +6,15 @@ import traceback
 import subprocess
 import logging
 import json
-import plotly.express as px
 from colorama import Fore
 try:
-    from sql_agent import SQLAgent
-    from utils import get_table_info, execute_sql_query, save_data_info, create_sqlite_db, create_plot_figure
-    from insight_agent import InsightAgent
+    from src.agents.sql_agent import SQLAgent
+    from src.utils.data_utils import (get_table_info, execute_sql_query,
+                       save_data_info, create_sqlite_db, create_plot_figure)
+    from src.agents.insight_agent import InsightAgent
 except ImportError as e:
     st.error(f"Import error: {e}")
     st.stop()
-
-
-
 
 
 # Configure logging
@@ -345,12 +342,12 @@ def render_query_panel(agent_type, model, api_key, base_url, enable_plots, smart
                             elif result is not None:
                                 # Add to chat history
                                 add_to_chat_history(user_question, sql_query, result)
-                                
+                                plot_configs_for_insights = []
                                 # Generate plots if enabled
                                 if enable_plots and not result.empty:
                                     try:
                                         # Generate plot suggestions and create plots
-                                        from plotting import generate_plot_suggestions
+                                        from src.plotting.plot_generator import generate_plot_suggestions
                                         
                                         # Get column information for plot generation
                                         columns_info = {col: result[col].dtype for col in result.columns}
@@ -358,7 +355,6 @@ def render_query_panel(agent_type, model, api_key, base_url, enable_plots, smart
                                         print(Fore.MAGENTA + json.dumps(plot_suggestions, indent=2) + Fore.RESET)
                                         # Store plot data for later display with insights
                                         plots = []
-                                        plot_configs_for_insights = []
                                         for plot_config in plot_suggestions:
                                             # Create plot and capture it
                                             plot_fig = create_plot_figure(plot_config, result)
@@ -375,14 +371,14 @@ def render_query_panel(agent_type, model, api_key, base_url, enable_plots, smart
                                                 if 'insight_agent' not in st.session_state:
                                                     st.session_state.insight_agent = InsightAgent(agent)
                                                     
-                                                plot_insights_list = st.session_state.insight_agent.generate_plot_insights(
-                                                    plot_configs_for_insights, result, user_question
-                                                )
+                                                # plot_insights_list = st.session_state.insight_agent.generate_plot_insights(
+                                                #     plot_configs_for_insights, result, user_question
+                                                # )
                                                 
                                                 # Add insights to plots - now plot_insights_list is a list of lists
-                                                for i, plot in enumerate(plots):
-                                                    if i < len(plot_insights_list) and plot_insights_list[i]:
-                                                        plot['insights'] = plot_insights_list[i]
+                                                # for i, plot in enumerate(plots):
+                                                #     if i < len(plot_insights_list) and plot_insights_list[i]:
+                                                #         plot['insights'] = plot_insights_list[i]
                                                         
                                             except Exception as insight_error:
                                                 if st.session_state.debug_mode:
@@ -401,7 +397,13 @@ def render_query_panel(agent_type, model, api_key, base_url, enable_plots, smart
                                         # Initialize InsightAgent if not exists
                                         if 'insight_agent' not in st.session_state:
                                             st.session_state.insight_agent = InsightAgent(agent)
-                                        
+                                        plot_insights_list = st.session_state.insight_agent.generate_plot_insights(
+                                                    plot_configs_for_insights, result, user_question
+                                                )
+                                        print(plot_configs_for_insights)
+                                        print(
+                                            Fore.BLUE + f"Plot insights generated: {plot_insights_list}" + Fore.RESET
+                                        )
                                         # Use InsightAgent for sophisticated analysis
                                         insight_summary = st.session_state.insight_agent.analyze_query_result(
                                             user_question, result
@@ -409,14 +411,17 @@ def render_query_panel(agent_type, model, api_key, base_url, enable_plots, smart
                                         print(Fore.CYAN + "Insight Summary: " + insight_summary + Fore.RESET)
                                         # Add to analysis context
                                         st.session_state.analysis_context.append(insight_summary)
-                                        context_tail = "\n\n".join(st.session_state.analysis_context[-5:])  # last 5
+                                        context_tail = "\n\n".join(set(st.session_state.analysis_context[-5:]))  # last 5
                                         
                                         summary_prompt = (
                                             "You are a data analyst. Given the latest query results analysis and prior context, "
-                                            "write a concise 1-2 sentence insight. Then suggest up to 3 follow-up analysis questions.\n\n"
+                                            "write a concise 1-2 sentence insight that includes key statistical findings (means, medians, distributions, correlations). "
+                                            "Then suggest up to 3 specific follow-up analysis questions.\n\n"
                                             f"[PRIOR CONTEXT]\n{context_tail}\n\n"
                                             f"[LATEST QUESTION]\n{user_question}\n\n"
                                             f"[LATEST RESULT ANALYSIS]\n{insight_summary}\n\n"
+                                            f"[PLOT INSIGHTS]\n{plot_insights_list}\n\n"
+                                            "Focus on actionable insights with specific numbers. "
                                             "Respond in JSON with keys: summary (string), suggestions (array of strings)."
                                         )
                                         print(Fore.GREEN + "Summary Prompt: " + summary_prompt + Fore.RESET)

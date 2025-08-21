@@ -1,5 +1,6 @@
-from sql_agent.llm import LLMFactory, get_sql_query_from_llm
+from src.agents.llm import LLMFactory, get_sql_query_from_llm
 from typing import Optional
+
 
 class SQLAgent:
     def __init__(self, agent_provider, model_name: Optional[str] = None, base_url: Optional[str] = None, api_key: Optional[str] = None):

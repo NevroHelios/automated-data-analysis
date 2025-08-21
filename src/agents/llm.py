@@ -130,7 +130,6 @@ class GeminiAgent(LLMAgent):
                         # Extract function information
                         if tool_data.get("type") == "function" and "function" in tool_data:
                             function_info = tool_data["function"]
-                            tool_name = function_info.get("name", "")
                             
                             # For Gemini, we need to extract the actual query from the description or parameters
                             # This is a simplified approach - you might need to adjust based on actual Gemini responses

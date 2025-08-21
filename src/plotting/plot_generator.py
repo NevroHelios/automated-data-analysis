@@ -124,11 +124,72 @@ RESPOND ONLY WITH THE JSON ARRAY, NO OTHER TEXT:
             response = response[3:-3]
         
         plot_suggestions = json.loads(response)
-        return plot_suggestions
+        
+        # Filter out inappropriate plot types based on data types
+        filtered_suggestions = filter_plot_suggestions(plot_suggestions, columns_info, data_sample)
+        return filtered_suggestions
     except Exception as e:
         st.error(f"Error generating plot suggestions: {e}")
         # Return default suggestions based on data types
         return generate_default_plots(columns_info, data_sample)
+
+
+def filter_plot_suggestions(plot_suggestions: List[Dict], columns_info: Dict, data_sample: pd.DataFrame) -> List[Dict]:
+    """
+    Filter out inappropriate plot suggestions based on data types and column compatibility.
+    
+    Args:
+        plot_suggestions: List of plot configurations from LLM
+        columns_info: Dictionary containing column names and their data types
+        data_sample: Sample of the dataframe for context
+        
+    Returns:
+        Filtered list of plot configurations
+    """
+    filtered_plots = []
+    
+    for plot_config in plot_suggestions:
+        plot_type = plot_config.get("plot_type", "")
+        columns = plot_config.get("columns", [])
+        
+        # Skip plots with missing columns
+        if not all(col in data_sample.columns for col in columns):
+            continue
+            
+        # Check data type compatibility
+        if plot_type == "correlation":
+            # Correlation plots need at least 2 numerical columns
+            numerical_cols = [col for col in columns if pd.api.types.is_numeric_dtype(data_sample[col])]
+            if len(numerical_cols) < 2:
+                continue  # Skip correlation plots with categorical data
+                
+        elif plot_type == "scatter":
+            # Scatter plots need 2 numerical columns
+            if len(columns) >= 2:
+                x_col, y_col = columns[0], columns[1]
+                if not (pd.api.types.is_numeric_dtype(data_sample[x_col]) and 
+                       pd.api.types.is_numeric_dtype(data_sample[y_col])):
+                    # Convert scatter to box plot if one column is categorical
+                    if (not pd.api.types.is_numeric_dtype(data_sample[x_col]) and 
+                        pd.api.types.is_numeric_dtype(data_sample[y_col])):
+                        plot_config["plot_type"] = "box"
+                        plot_config["title"] = plot_config["title"].replace("vs", "by")
+                    else:
+                        continue  # Skip if both are categorical or other issues
+                        
+        elif plot_type in ["histogram", "box", "violin"]:
+            # These need at least one numerical column
+            has_numerical = any(pd.api.types.is_numeric_dtype(data_sample[col]) for col in columns)
+            if not has_numerical:
+                continue
+                
+        elif plot_type in ["bar", "pie"]:
+            # These work with categorical data, so they're usually fine
+            pass
+            
+        filtered_plots.append(plot_config)
+    
+    return filtered_plots
 
 
 def generate_default_plots(columns_info: Dict, data_sample: pd.DataFrame) -> List[Dict]:
