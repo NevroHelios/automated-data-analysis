@@ -48,6 +48,8 @@ def create_sqlite_db(data: pd.DataFrame, filename: str):
     base_name = os.path.splitext(filename)[0]
     db_path = f'data/{base_name}/{base_name}.db'
 
+    column_names = [str(x).lower().strip() for x in data.columns.tolist()]
+    data.columns = column_names
     conn = sqlite3.connect(db_path)
     data.to_sql('data_table', conn, if_exists='replace', index=False)
     conn.close()
